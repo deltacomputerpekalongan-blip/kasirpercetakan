@@ -103,11 +103,12 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
     <div class="row"><span>Total</span><span class="tot" id="tot">Rp0</span></div>
     <div class="f">
       <div><label for="met">Pembayaran</label><select id="met"><option>Tunai</option><option>QRIS</option><option>Transfer</option><option>Kartu</option></select></div>
-      <div id="tw"><label for="tun">Uang diterima</label><input id="tun" type="number" min="0" inputmode="numeric"></div>
+      <div id="tw"><label for="tun">Dibayar sekarang (0 = belum bayar)</label><input id="tun" type="number" min="0" inputmode="numeric" placeholder="0"><button class="btn s" id="pas" type="button" style="margin-top:6px">Bayar lunas</button></div>
     </div>
     <div class="row"><span class="mu">Kembalian</span><b id="kem">Rp0</b></div>
+    <div class="row"><span class="mu">Sisa tagihan</span><b id="sisa">Rp0</b></div>
     <p id="err" class="low" role="alert" style="margin:6px 0"></p>
-    <button class="btn" id="bayar" disabled>Bayar</button>
+    <button class="btn" id="bayar" disabled>Simpan transaksi</button>
     <button class="btn s" id="kosong" style="margin-top:8px">Kosongkan keranjang</button>
   </aside>
 </section>
@@ -126,12 +127,12 @@ dialog::backdrop{background:rgba(0,0,0,.5)}
 </section>
 
 <section id="laporan" class="hide">
-  <div class="f" style="max-width:460px"><div><label for="per">Periode</label><select id="per"><option value="all">Semua transaksi</option><option value="month">Bulan ini</option><option value="day">Tanggal tertentu</option></select></div><div id="rdw"><label for="rd">Tanggal</label><input id="rd" type="date"></div></div>
+  <div class="f" style="max-width:460px"><div><label for="per">Periode</label><select id="per"><option value="all">Semua transaksi</option><option value="month">Bulan ini</option><option value="day">Tanggal tertentu</option></select></div><div><label for="stf">Status</label><select id="stf"><option value="">Semua</option><option value="open">Belum lunas</option></select></div><div id="rdw"><label for="rd">Tanggal</label><input id="rd" type="date"></div></div>
   <div class="cards" id="cards"></div>
   <h2>Produk terlaris</h2>
   <div class="sc"><table><thead><tr><th>Produk</th><th>Terjual</th></tr></thead><tbody id="top"></tbody></table></div>
   <h2 style="margin-top:16px">Riwayat transaksi</h2>
-  <div class="sc"><table><thead><tr><th>Waktu</th><th>Nota</th><th>Produk</th><th>Metode</th><th>Total</th><th>Aksi</th></tr></thead><tbody id="hist"></tbody></table></div>
+  <div class="sc"><table><thead><tr><th>Waktu</th><th>Nota</th><th>Produk</th><th>Metode</th><th>Total</th><th>Status</th><th>Aksi</th></tr></thead><tbody id="hist"></tbody></table></div>
   <p><button class="btn s" id="reset">Kembalikan data contoh</button> <button class="btn s" id="imp">Impor data lama</button> <span class="mu" id="impm" role="status"></span></p>
 </section>
 
@@ -201,6 +202,10 @@ let D={products:SEED(),sales:[],seq:1,nid:100,tasks:[]};
 try{const x=localStorage.getItem("kasir-percetakan");if(x)D=Object.assign(D,JSON.parse(x))}catch(e){}
 const save=()=>{try{localStorage.setItem("kasir-percetakan",JSON.stringify(D))}catch(e){}window.onSave&&window.onSave()};
 let cart={},cn=0;
+const getPays=s=>Array.isArray(s.pays)?s.pays:(s.pays?Object.values(s.pays):null);
+const paid=s=>{const p=getPays(s);return p?p.reduce((a,x)=>a+(+x.amt||0),0):Math.min(s.uang||0,Math.round(s.tot))};
+const sisaOf=s=>Math.max(0,Math.round(s.tot)-paid(s));
+const statusOf=s=>{const r=sisaOf(s);return r===0?"Lunas":paid(s)===0?"Belum bayar":"DP, sisa "+rp(r)};
 
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("nav button").forEach(x=>x.setAttribute("aria-selected",x===b));
@@ -234,19 +239,21 @@ $("#cart").onchange=e=>{const k=e.target.dataset.k,i=cart[k];if(!i)return;let q=
   i.q=q;drawCart()};
 function calc(){const t=totals();
   $("#sub").textContent=rp(t.sub);$("#dv").textContent="−"+rp(t.dv);$("#pv").textContent=rp(t.pv);$("#tot").textContent=rp(t.tot);
-  const tunai=$("#met").value==="Tunai";$("#tw").style.visibility=tunai?"visible":"hidden";
-  const uang=+$("#tun").value||0;$("#kem").textContent=rp(tunai?Math.max(0,uang-t.tot):0);
-  $("#bayar").disabled=!t.tot||(tunai&&uang<Math.round(t.tot))}
+  const tunai=$("#met").value==="Tunai",uang=+$("#tun").value||0;
+  $("#kem").textContent=rp(tunai?Math.max(0,uang-t.tot):0);
+  $("#sisa").textContent=rp(Math.max(0,Math.round(t.tot)-uang));
+  $("#bayar").disabled=!t.tot}
 ["disk","ppn","met","tun"].forEach(i=>$("#"+i).oninput=()=>{$("#err").textContent="";calc()});
 $("#kosong").onclick=()=>{cart={};$("#err").textContent="";drawCart()};
+$("#pas").onclick=()=>{$("#tun").value=Math.round(totals().tot);calc()};
 $("#bayar").onclick=()=>{
   const t=totals(),met=$("#met").value,uang=+$("#tun").value||0;
   const items=Object.values(cart).map(i=>{if(i.pid){const p=D.products.find(p=>p.id===i.pid);if(p.s!==null)p.s-=i.q}return{n:i.n,h:i.h,q:i.q,u:i.u}});
-  const sale={no:"TRX"+String(D.seq++).padStart(4,"0"),t:Date.now(),met,items,...t,uang:met==="Tunai"?uang:t.tot};
+  const now=Date.now(),sale={no:"TRX"+String(D.seq++).padStart(4,"0"),t:now,met,items,...t,uang,pays:uang>0?[{t:now,amt:Math.min(uang,Math.round(t.tot)),met}]:[]};
   D.sales.push(sale);save();
   $("#rb").innerHTML=`<div style="text-align:center"><b>KASIR PERCETAKAN</b><br>${new Date(sale.t).toLocaleString("id-ID")}<br>${sale.no}</div><hr>`+
    items.map(i=>`<div>${esc(i.n)}<br><span style="display:flex;justify-content:space-between"><span>${i.q} x ${rp(i.h)}</span><span>${rp(i.q*i.h)}</span></span></div>`).join("")+
-   `<hr><div class="row"><span>Subtotal</span><span>${rp(t.sub)}</span></div><div class="row"><span>Diskon</span><span>−${rp(t.dv)}</span></div><div class="row"><span>PPN</span><span>${rp(t.pv)}</span></div><div class="row"><b>Total</b><b>${rp(t.tot)}</b></div><div class="row"><span>${met}</span><span>${rp(sale.uang)}</span></div><div class="row"><span>Kembali</span><span>${rp(Math.max(0,sale.uang-t.tot))}</span></div><hr><div style="text-align:center">Terima kasih</div>`;
+   `<hr><div class="row"><span>Subtotal</span><span>${rp(t.sub)}</span></div><div class="row"><span>Diskon</span><span>−${rp(t.dv)}</span></div><div class="row"><span>PPN</span><span>${rp(t.pv)}</span></div><div class="row"><b>Total</b><b>${rp(t.tot)}</b></div><div class="row"><span>Dibayar (${met})</span><span>${rp(Math.min(uang,Math.round(t.tot)))}</span></div>${met==="Tunai"&&uang>t.tot?`<div class="row"><span>Kembali</span><span>${rp(uang-t.tot)}</span></div>`:""}<div class="row"><b>${sisaOf(sale)>0?"Sisa tagihan":"LUNAS"}</b><b>${sisaOf(sale)>0?rp(sisaOf(sale)):""}</b></div><hr><div style="text-align:center">Terima kasih</div>`;
   $("#rcp").showModal()};
 $("#tutup").onclick=()=>{$("#rcp").close();cart={};$("#tun").value="";$("#disk").value=0;$("#ppn").value="0";drawGrid();drawCart()};
 
@@ -270,20 +277,37 @@ $("#tambah").onclick=()=>{const n=$("#an").value.trim(),h=+$("#ah").value;if(!n|
 function drawReport(){
   const rd=$("#rd");if(!rd.value)rd.value=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,10);
   const per=$("#per").value;$("#rdw").style.visibility=per==="day"?"visible":"hidden";
-  const d=new Date(rd.value+"T00:00").toDateString(),now=new Date(),S=D.sales.filter(s=>{const x=new Date(s.t);return per==="all"||(per==="month"?x.getMonth()===now.getMonth()&&x.getFullYear()===now.getFullYear():x.toDateString()===d)});
+  const d=new Date(rd.value+"T00:00").toDateString(),now=new Date(),S=D.sales.filter(s=>{const x=new Date(s.t);return per==="all"||(per==="month"?x.getMonth()===now.getMonth()&&x.getFullYear()===now.getFullYear():x.toDateString()===d)}).filter(s=>$("#stf").value!=="open"||sisaOf(s)>0);
   const omzet=S.reduce((a,s)=>a+s.tot,0),n=S.length;
-  $("#cards").innerHTML=`<div class="card"><span class="mu">Total penjualan</span><b>${rp(omzet)}</b></div><div class="card"><span class="mu">Jumlah transaksi</span><b>${n}</b></div><div class="card"><span class="mu">Rata-rata per transaksi</span><b>${rp(n?omzet/n:0)}</b></div>`;
+  $("#cards").innerHTML=`<div class="card"><span class="mu">Total penjualan</span><b>${rp(omzet)}</b></div><div class="card"><span class="mu">Jumlah transaksi</span><b>${n}</b></div><div class="card"><span class="mu">Rata-rata per transaksi</span><b>${rp(n?omzet/n:0)}</b></div><div class="card"><span class="mu">Belum dibayar</span><b>${rp(S.reduce((a,x)=>a+sisaOf(x),0))}</b><small>${S.filter(x=>sisaOf(x)>0).length} transaksi belum lunas</small></div>`;
   const m={};S.forEach(s=>s.items.forEach(i=>m[i.n]=(m[i.n]||0)+i.q));
   const t=Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,5);
   $("#top").innerHTML=t.length?t.map(([a,b])=>`<tr><td>${esc(a)}</td><td>${b}</td></tr>`).join(""):'<tr><td colspan="2" class="mu">Belum ada penjualan pada periode ini.</td></tr>';
-  $("#hist").innerHTML=S.length?S.slice().reverse().map(s=>{const nm=s.items.slice(0,2).map(i=>esc(i.n)).join(", ")+(s.items.length>2?` +${s.items.length-2} lainnya`:"");return `<tr><td>${new Date(s.t).toLocaleString("id-ID",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</td><td>${s.no}</td><td style="white-space:normal;min-width:180px">${nm}</td><td>${s.met}</td><td>${rp(s.tot)}</td><td><button class="btn s" data-no="${s.no}">Detail</button></td></tr>`}).join(""):'<tr><td colspan="6" class="mu">Belum ada transaksi pada periode ini. Ubah Periode untuk melihat transaksi lain. Transaksi dari halaman Kasir akan muncul di sini.</td></tr>'}
-$("#rd").onchange=drawReport;$("#per").onchange=drawReport;
-$("#hist").onclick=e=>{const b=e.target.closest("[data-no]");if(!b)return;const s=D.sales.find(x=>x.no===b.dataset.no);if(!s)return;const tn=s.met==="Tunai";
+  $("#hist").innerHTML=S.length?S.slice().reverse().map(s=>{const nm=s.items.slice(0,2).map(i=>esc(i.n)).join(", ")+(s.items.length>2?` +${s.items.length-2} lainnya`:"");return `<tr><td>${new Date(s.t).toLocaleString("id-ID",{day:"numeric",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}</td><td>${s.no}</td><td style="white-space:normal;min-width:180px">${nm}</td><td>${s.met}</td><td>${rp(s.tot)}</td><td class="${sisaOf(s)>0?"low":""}">${statusOf(s)}</td><td><button class="btn s" data-no="${s.no}">Detail</button></td></tr>`}).join(""):'<tr><td colspan="7" class="mu">Belum ada transaksi pada periode ini. Ubah Periode untuk melihat transaksi lain. Transaksi dari halaman Kasir akan muncul di sini.</td></tr>'}
+$("#rd").onchange=drawReport;$("#per").onchange=drawReport;$("#stf").onchange=drawReport;
+let dno=null;
+function showDetail(no){const s=D.sales.find(x=>x.no===no);if(!s)return;dno=no;
+  const pl=getPays(s),pd=paid(s),sisa=sisaOf(s);
+  const ket=(s.ket||"").split(". ").filter(x=>x&&!/^(Status bayar|Sisa)/.test(x)).join(". ");
+  const rows=pl?pl.map((p,i)=>`<div class="row"><span>${new Date(p.t).toLocaleDateString("id-ID",{day:"numeric",month:"short"})} ${esc(p.met)}</span><span>${rp(p.amt)} <button class="x" data-dp="${i}" aria-label="Hapus pembayaran">×</button></span></div>`).join(""):(pd?`<div class="row"><span>${esc(s.met)}</span><span>${rp(pd)}</span></div>`:"");
   $("#db").innerHTML=`<div style="text-align:center"><b>DETAIL TRANSAKSI</b><br>${s.no}<br>${new Date(s.t).toLocaleString("id-ID")}</div><hr>`+
    s.items.map(i=>`<div>${esc(i.n)}<br><span style="display:flex;justify-content:space-between"><span>${i.q} ${esc(i.u||"")} x ${rp(i.h)}</span><span>${rp(i.q*i.h)}</span></span></div>`).join("")+
-   `<hr><div class="row"><span>Subtotal</span><span>${rp(s.sub)}</span></div><div class="row"><span>Diskon</span><span>−${rp(s.dv)}</span></div><div class="row"><span>PPN</span><span>${rp(s.pv)}</span></div><div class="row"><b>Total</b><b>${rp(s.tot)}</b></div><hr><div class="row"><span>Metode bayar</span><span>${s.met}</span></div>`+
-   (tn?`<div class="row"><span>Uang diterima</span><span>${rp(s.uang)}</span></div><div class="row"><span>Kembalian</span><span>${rp(Math.max(0,s.uang-s.tot))}</span></div>`:`<div class="row"><span>Dibayar</span><span>${rp(s.tot)}</span></div>`)+(s.ket?`<hr><div>${esc(s.ket)}</div>`:"");
-  $("#dtl").showModal()};
+   `<hr><div class="row"><span>Subtotal</span><span>${rp(s.sub)}</span></div><div class="row"><span>Diskon</span><span>−${rp(s.dv)}</span></div><div class="row"><span>PPN</span><span>${rp(s.pv)}</span></div><div class="row"><b>Total</b><b>${rp(s.tot)}</b></div><hr><b>Pembayaran</b>`+
+   (rows||'<div class="mu">Belum ada pembayaran.</div>')+
+   `<hr><div class="row"><span>Terbayar</span><span>${rp(pd)}</span></div><div class="row"><b>${sisa>0?"Sisa tagihan":"Status"}</b><b class="${sisa>0?"low":""}">${sisa>0?rp(sisa):"LUNAS"}</b></div>`+
+   (ket?`<hr><div>${esc(ket)}</div>`:"")+
+   (sisa>0?`<hr><label for="pa">Tambah pembayaran atau DP</label><input id="pa" type="number" min="1" inputmode="numeric" placeholder="Jumlah"><select id="pm" style="margin-top:6px"><option>Tunai</option><option>QRIS</option><option>Transfer</option><option>Kartu</option></select><div id="pe" class="low" role="alert"></div><button class="btn" id="psave" style="margin-top:8px;font-size:14px;padding:10px">Simpan pembayaran</button>`:"");
+  if(!$("#dtl").open)$("#dtl").showModal()}
+$("#hist").onclick=e=>{const b=e.target.closest("[data-no]");if(b)showDetail(b.dataset.no)};
+$("#db").onclick=e=>{const s=D.sales.find(x=>x.no===dno);if(!s)return;
+  if(e.target.dataset.dp!==undefined){if(!confirm("Hapus pembayaran ini?"))return;
+    let pl=getPays(s);if(!pl)return;s.pays=pl;s.pays.splice(+e.target.dataset.dp,1);save();showDetail(dno);drawReport();return}
+  if(e.target.id!=="psave")return;
+  const amt=Math.round(+$("#pa").value||0),sisa=sisaOf(s);
+  if(amt<=0){$("#pe").textContent="Isi jumlah pembayaran.";return}
+  if(amt>sisa){$("#pe").textContent="Melebihi sisa tagihan ("+rp(sisa)+").";return}
+  let pl=getPays(s);if(!pl){pl=[];const p0=paid(s);if(p0>0)pl.push({t:s.t,amt:p0,met:s.met})}
+  pl.push({t:Date.now(),amt,met:$("#pm").value});s.pays=pl;save();showDetail(dno);drawReport()};
 $("#dclose").onclick=()=>$("#dtl").close();
 $("#reset").onclick=()=>{if(confirm("Hapus semua produk dan transaksi, lalu kembali ke data contoh? Catatan tidak ikut terhapus.")){D.products=SEED();D.sales=[];D.seq=1;D.nid=100;save();cart={};cats();drawGrid();drawCart();drawReport()}};
 
@@ -377,8 +401,8 @@ function mergeLegacy(R,C){
   C.forEach((c,i)=>{const t={id:Date.now()+i,t:c.teks,note:"Dicatat "+c.waktu,due:"",d:false};if(!tk.has(t.t+"|"+t.note)){tk.add(t.t+"|"+t.note);D.tasks.push(t);nt++}});
   D.sales.sort((a,b)=>a.t-b.t);return[ns,nt]}
 $("#ex-json").onclick=()=>saveFile("kasir-cadangan-"+stamp()+".json",new Blob([JSON.stringify({app:"kasir-percetakan",versi:1,diekspor:new Date().toISOString(),products:D.products,nid:D.nid,seq:D.seq,tasks:D.tasks,sales:D.sales},null,2)],{type:"application/json"}),dm);
-$("#ex-csv").onclick=()=>{const r=[["Nota","Tanggal","Jam","Produk","Jumlah","Harga satuan","Subtotal item","Diskon transaksi","PPN transaksi","Total transaksi","Metode","Keterangan"]];
-  D.sales.forEach(s=>{const d=new Date(s.t);s.items.forEach(i=>r.push([s.no,d.toLocaleDateString("id-ID"),d.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}),i.n,i.q,i.h,i.q*i.h,Math.round(s.dv||0),Math.round(s.pv||0),Math.round(s.tot),s.met,s.ket||""]))});
+$("#ex-csv").onclick=()=>{const r=[["Nota","Tanggal","Jam","Produk","Jumlah","Harga satuan","Subtotal item","Diskon transaksi","PPN transaksi","Total transaksi","Metode","Dibayar","Sisa","Keterangan"]];
+  D.sales.forEach(s=>{const d=new Date(s.t);s.items.forEach(i=>r.push([s.no,d.toLocaleDateString("id-ID"),d.toLocaleTimeString("id-ID",{hour:"2-digit",minute:"2-digit"}),i.n,i.q,i.h,i.q*i.h,Math.round(s.dv||0),Math.round(s.pv||0),Math.round(s.tot),s.met,paid(s),sisaOf(s),s.ket||""]))});
   saveFile("transaksi-"+stamp()+".csv",new Blob([csv(r)],{type:"text/csv"}),dm)};
 $("#ex-prod").onclick=()=>saveFile("produk-"+stamp()+".csv",new Blob([csv([["Nama","Kategori","Satuan","Harga jual","Stok"]].concat(D.products.map(p=>[p.n,p.k,p.u,p.h,p.s===null?"Layanan":p.s])))],{type:"text/csv"}),dm);
 $("#im-file").onchange=async e=>{const f=e.target.files[0];e.target.value="";if(!f)return;
@@ -416,10 +440,11 @@ const STORE="toko-utama";
 const ss=$("#ss"),sb=$("#sbtn");
 const app=initializeApp(firebaseConfig),db=getDatabase(app);
 const mainRef=ref(db,"stores/"+STORE+"/main"),salesRef=ref(db,"stores/"+STORE+"/sales");
-let known=new Set(),offs=[],timer=null,ready=false,pend=null,on=false,label="",conn=false,wasConn=false,last=null;
+let sig={},known=new Set(),offs=[],timer=null,ready=false,pend=null,on=false,label="",conn=false,wasConn=false,last=null;
 const arr=x=>x?(Array.isArray(x)?x:Object.values(x)):[];
 const normP=p=>({...p,s:p.s??null,u:p.u??""});
 const clean=x=>JSON.parse(JSON.stringify(x));
+const norm=x=>sj(JSON.parse(JSON.stringify(x,(k,v)=>v===null||(Array.isArray(v)&&!v.length)?undefined:v)));
 const sj=x=>JSON.stringify(x,(k,v)=>v&&typeof v==="object"&&!Array.isArray(v)?Object.fromEntries(Object.keys(v).sort().map(q=>[q,v[q]])):v);
 const mainState=()=>sj({products:D.products.map(normP),nid:D.nid,tasks:D.tasks});
 const redraw=()=>{cats();drawGrid();drawCart();drawStock();drawReport();drawTasks()};
@@ -438,7 +463,7 @@ function push(){
   if(!on||!ready)return;
   set(mainRef,clean({products:D.products,nid:D.nid,seq:D.seq,tasks:D.tasks,imp:D.imp||0})).catch(err);
   const cur=new Set(D.sales.map(x=>String(x.t)));
-  D.sales.forEach(x=>{const id=String(x.t);if(!known.has(id)){known.add(id);set(ref(db,"stores/"+STORE+"/sales/"+id),clean(x)).catch(err)}});
+  D.sales.forEach(x=>{const id=String(x.t),j=norm(x);if(!known.has(id)||sig[id]!==j){known.add(id);sig[id]=j;set(ref(db,"stores/"+STORE+"/sales/"+id),clean(x)).catch(err)}});
   [...known].forEach(id=>{if(!cur.has(id)){known.delete(id);remove(ref(db,"stores/"+STORE+"/sales/"+id)).catch(err)}});
 }
 window.onSave=()=>{clearTimeout(timer);timer=setTimeout(push,500)};
@@ -454,9 +479,9 @@ function start(who){
     if(pend){applySales(pend);pend=null;changed=true}
     last=new Date();if(changed){local();redraw()}status();if(!D.imp)runImport()},err));
   offs.push(onValue(salesRef,s=>{
-    const o=s.val()||{};known=new Set(Object.keys(o));
+    const o=s.val()||{};known=new Set(Object.keys(o));sig={};for(const k in o)sig[k]=norm(o[k]);
     if(!ready){pend=o;return}
-    if(Object.keys(o).sort().join()===D.sales.map(x=>String(x.t)).sort().join())return;
+    if(Object.keys(o).length===D.sales.length&&D.sales.every(x=>sig[String(x.t)]===norm(x)))return;
     applySales(o);local();redraw()},err));
 }
 var impBusy=false;
